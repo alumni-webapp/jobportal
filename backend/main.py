@@ -32,10 +32,10 @@ def _is_demo_mode() -> bool:
     """Check if running in demo mode (no API keys configured)."""
     return not os.getenv("ANTHROPIC_API_KEY", "")
 
-# CORS middleware
+# CORS middleware - allow localhost and Codespaces domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
