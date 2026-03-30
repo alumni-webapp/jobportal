@@ -14,6 +14,10 @@ from resume_parser import extract_text_from_pdf, extract_text_from_docx, parse_r
 from job_fetcher import fetch_jobs
 from job_matcher import match_jobs_batch
 from resume_generator import generate_tailored_resume
+from mock_data import (
+    MOCK_RESUME_PARSED, MOCK_JOBS,
+    mock_match_score, mock_tailored_resume,
+)
 
 # Load environment variables from ../.env
 load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
@@ -22,6 +26,11 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 init_db()
 
 app = FastAPI(title="AI Job Portal", version="1.0.0")
+
+
+def _is_demo_mode() -> bool:
+    """Check if running in demo mode (no API keys configured)."""
+    return not os.getenv("ANTHROPIC_API_KEY", "")
 
 # CORS middleware
 app.add_middleware(
@@ -64,20 +73,32 @@ def _get_anthropic_key() -> str:
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "demo_mode": _is_demo_mode(),
+    }
 
 
 @app.post("/api/upload-resume")
 async def upload_resume(file: UploadFile = File(...)):
     """Upload and parse a resume file (PDF or DOCX)."""
     try:
-        api_key = _get_anthropic_key()
-
         # Read file content
         file_bytes = await file.read()
 
         if not file_bytes:
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+        # Demo mode: return mock parsed resume
+        if _is_demo_mode():
+            return {
+                "session_id": str(uuid.uuid4()),
+                "filename": file.filename,
+                "parsed_data": MOCK_RESUME_PARSED,
+                "demo_mode": True,
+            }
+
+        api_key = _get_anthropic_key()
 
         # Extract text based on content type or filename
         content_type = file.content_type or ""
@@ -153,11 +174,9 @@ async def fetch_jobs_endpoint(request: FetchJobsRequest):
         has_adzuna = config["adzuna_app_id"] and config["adzuna_app_key"]
         has_jsearch = bool(config["rapidapi_key"])
 
+        # Demo mode: return mock jobs
         if not has_adzuna and not has_jsearch:
-            raise HTTPException(
-                status_code=500,
-                detail="No job search API configured. Please set ADZUNA_APP_ID/ADZUNA_APP_KEY or RAPIDAPI_KEY in the .env file.",
-            )
+            return {"jobs": MOCK_JOBS, "count": len(MOCK_JOBS), "demo_mode": True}
 
         jobs = await fetch_jobs(request.skills, request.preferred_roles, config)
 
@@ -176,10 +195,20 @@ async def fetch_jobs_endpoint(request: FetchJobsRequest):
 async def match_jobs_endpoint(request: MatchJobsRequest):
     """Match jobs against resume data using AI analysis."""
     try:
-        api_key = _get_anthropic_key()
-
         if not request.jobs:
             return {"matched_jobs": [], "count": 0}
+
+        # Demo mode: use mock matching
+        if _is_demo_mode():
+            skills = request.resume_data.get("skills", [])
+            matched = []
+            for job in request.jobs:
+                match_result = mock_match_score(skills, job)
+                matched.append({**job, **match_result})
+            matched.sort(key=lambda x: x["match_score"], reverse=True)
+            return {"matched_jobs": matched, "count": len(matched), "demo_mode": True}
+
+        api_key = _get_anthropic_key()
 
         matched_jobs = await match_jobs_batch(
             request.resume_data, request.jobs, api_key
@@ -200,13 +229,22 @@ async def match_jobs_endpoint(request: MatchJobsRequest):
 async def generate_resume_endpoint(request: GenerateResumeRequest):
     """Generate a tailored resume for a specific job."""
     try:
-        api_key = _get_anthropic_key()
-
         if not request.job_description or not request.job_title:
             raise HTTPException(
                 status_code=400,
                 detail="Both job_description and job_title are required.",
             )
+
+        # Demo mode: use mock resume generator
+        if _is_demo_mode():
+            tailored = mock_tailored_resume(
+                request.resume_data,
+                request.job_title,
+                request.job_description,
+            )
+            return {"tailored_resume": tailored, "demo_mode": True}
+
+        api_key = _get_anthropic_key()
 
         tailored_resume = generate_tailored_resume(
             request.resume_data,
